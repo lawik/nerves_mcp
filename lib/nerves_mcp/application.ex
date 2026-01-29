@@ -1,19 +1,31 @@
 defmodule NervesMCP.Application do
-  # See https://hexdocs.pm/elixir/Application.html
-  # for more information on OTP Applications
   @moduledoc false
 
   use Application
 
   @impl true
   def start(_type, _args) do
-    children = [
-      # Starts a worker by calling: NervesMCP.Worker.start_link(arg)
-      # {NervesMCP.Worker, arg}
-    ]
+    children =
+      if Mix.env() != :test do
+        config = Application.get_env(:nerves_mcp, :connection, [])
+        connection_type = Keyword.get(config, :type, :uart)
 
-    # See https://hexdocs.pm/elixir/Supervisor.html
-    # for other strategies and supported options
+        connection_children =
+          case connection_type do
+            :uart -> [NervesMCP.Connection.UART]
+            :ssh -> []
+          end
+
+        port = Application.get_env(:nerves_mcp, :port, 8080)
+
+        [
+          Anubis.Server.Registry,
+          {NervesMCP.Server, transport: :streamable_http},
+          {Bandit, plug: NervesMCP.Router, port: port}
+        ] ++ connection_children
+      else
+        []
+      end
     opts = [strategy: :one_for_one, name: NervesMCP.Supervisor]
     Supervisor.start_link(children, opts)
   end

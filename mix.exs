@@ -64,6 +64,8 @@ defmodule NervesMCP.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:anubis_mcp, "~> 0.17"},
+      {:bandit, "~> 1.0"},
       {:circuits_uart, "~> 1.0"},
       {:nstandard, "~> 0.1"},
       {:igniter, "~> 0.6", only: [:dev, :test]},
@@ -71,8 +73,6 @@ defmodule NervesMCP.MixProject do
       {:dialyxir, "~> 1.0", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:spellweaver, "~> 0.1", only: [:dev, :test], runtime: false}
-      # {:dep_from_hexpm, "~> 0.3.0"},
-      # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]
   end
 end

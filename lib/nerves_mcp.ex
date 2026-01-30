@@ -80,6 +80,11 @@ defmodule NervesMCP do
     :ok
   end
 
+  def exit do
+    IO.puts("Exiting...")
+    System.halt(0)
+  end
+
   defp receive_loop(parent) do
     receive do
       {:console_data, data} ->

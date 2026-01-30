@@ -1,11 +1,10 @@
-defmodule NervesMCP.Tools.DeviceEval do
+defmodule NervesMCP.Tools.DeviceEvalOutput do
   @moduledoc """
-  Evaluate Elixir code on a connected Nerves device.
+  Evaluate Elixir code on a connected Nerves device and capture IO output.
 
-  The device must be connected via serial (UART) or SSH.
-  Configure the connection in the application config.
-
-  Returns the result of the evaluated expression as inspected output.
+  Unlike `device_eval` which returns the expression's return value,
+  this tool captures what the code prints to stdout (IO.puts, IO.write, etc.)
+  and returns both the output and the result.
   """
 
   use Anubis.Server.Component, type: :tool
@@ -34,10 +33,10 @@ defmodule NervesMCP.Tools.DeviceEval do
     result =
       case connection_type do
         :uart ->
-          NervesMCP.Connection.UART.eval(code, timeout)
+          NervesMCP.Connection.UART.eval_output(code, timeout)
 
         :ssh ->
-          NervesMCP.Connection.SSH.eval(code, timeout)
+          NervesMCP.Connection.SSH.eval_output(code, timeout)
 
         other ->
           {:error, "Unknown connection type: #{inspect(other)}"}

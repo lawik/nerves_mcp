@@ -12,4 +12,5 @@ defmodule NervesMCP.Server do
     capabilities: [:tools]
 
   component NervesMCP.Tools.DeviceEval
+  component NervesMCP.Tools.DeviceEvalOutput
 end

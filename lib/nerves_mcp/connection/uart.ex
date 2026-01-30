@@ -18,6 +18,10 @@ defmodule NervesMCP.Connection.UART do
     GenServer.call(__MODULE__, {:eval, code, timeout}, timeout + 1000)
   end
 
+  def eval_output(code, timeout \\ 15000) do
+    GenServer.call(__MODULE__, {:eval_output, code, timeout}, timeout + 1000)
+  end
+
   def attach_console(pid \\ self()) do
     GenServer.call(__MODULE__, {:attach_console, pid})
   end
@@ -94,6 +98,55 @@ defmodule NervesMCP.Connection.UART do
     {:noreply, %{state | waiting: {from, marker, timer_ref, ""}}}
   end
 
+  def handle_call({:eval_output, code, timeout}, from, state) do
+    marker = generate_marker()
+
+    # Wrap code to capture IO output using StringIO
+    wrapped_code = """
+    (fn ->
+      {:ok, capture_pid} = StringIO.open("")
+      old_gl = Process.group_leader()
+      Process.group_leader(self(), capture_pid)
+
+      {output, result} = try do
+        {value, _binding} = Code.eval_string(#{inspect(code)})
+        Process.group_leader(self(), old_gl)
+        {_, captured} = StringIO.contents(capture_pid)
+        {captured, {:ok, inspect(value, pretty: true, limit: :infinity)}}
+      rescue
+        e ->
+          Process.group_leader(self(), old_gl)
+          {_, captured} = StringIO.contents(capture_pid)
+          {captured, {:error, Exception.format(:error, e, __STACKTRACE__)}}
+      catch
+        kind, reason ->
+          Process.group_leader(self(), old_gl)
+          {_, captured} = StringIO.contents(capture_pid)
+          {captured, {:error, Exception.format(kind, reason, __STACKTRACE__)}}
+      end
+
+      StringIO.close(capture_pid)
+
+      IO.puts("#{marker}_START")
+      IO.puts("OUTPUT:")
+      IO.write(output)
+      IO.puts("RESULT:")
+      case result do
+        {:ok, val} -> IO.puts(val)
+        {:error, msg} -> IO.puts("ERROR: " <> msg)
+      end
+      IO.puts("#{marker}_END")
+      :ok
+    end).()
+    """
+
+    Circuits.UART.write(state.uart, wrapped_code <> "\n\n")
+
+    timer_ref = Process.send_after(self(), {:timeout, from}, timeout)
+
+    {:noreply, %{state | waiting: {from, marker, timer_ref, ""}}}
+  end
+
   @impl true
   def handle_cast({:send_raw, data}, state) do
     Circuits.UART.write(state.uart, data)
@@ -113,6 +166,7 @@ defmodule NervesMCP.Connection.UART do
   end
 
   def handle_info({:circuits_uart, _port, data}, %{waiting: {from, marker, timer_ref, acc}} = state) do
+    NervesMCP.History.push(data)
     new_acc = acc <> data
 
     start_marker = "\n#{marker}_START\r"

@@ -13,7 +13,7 @@ defmodule NervesMCP.Application do
         connection_children =
           case connection_type do
             :uart -> [NervesMCP.Connection.UART]
-            :ssh -> []
+            :ssh -> [NervesMCP.Connection.SSH]
           end
 
         port = Application.get_env(:nerves_mcp, :port, 8080)

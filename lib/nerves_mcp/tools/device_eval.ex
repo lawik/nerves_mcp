@@ -43,7 +43,7 @@ defmodule NervesMCP.Tools.DeviceEval do
           NervesMCP.Connection.UART.eval(code, timeout)
 
         :ssh ->
-          NervesMCP.Connection.SSH.eval(code, config, timeout)
+          NervesMCP.Connection.SSH.eval(code, timeout)
 
         other ->
           {:error, "Unknown connection type: #{inspect(other)}"}

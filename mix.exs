@@ -67,6 +67,7 @@ defmodule NervesMCP.MixProject do
       {:anubis_mcp, "~> 0.17"},
       {:bandit, "~> 1.0"},
       {:circuits_uart, "~> 1.0"},
+      {:circular_buffer, "~> 0.4"},
       {:nstandard, "~> 0.1"},
       {:igniter, "~> 0.6", only: [:dev, :test]},
       {:ex_doc, "~> 0.31", only: [:dev, :test], runtime: false},

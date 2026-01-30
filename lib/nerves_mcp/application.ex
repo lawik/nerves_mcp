@@ -19,6 +19,7 @@ defmodule NervesMCP.Application do
         port = Application.get_env(:nerves_mcp, :port, 8080)
 
         [
+          NervesMCP.History,
           Anubis.Server.Registry,
           {NervesMCP.Server, transport: :streamable_http},
           {Bandit, plug: NervesMCP.Router, port: port}

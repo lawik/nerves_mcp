@@ -7,8 +7,6 @@ defmodule NervesMCP.Connection.UART do
 
   use GenServer
 
-  require Logger
-
   @default_port "/dev/ttyUSB0"
   @default_speed 115_200
 
@@ -67,12 +65,7 @@ defmodule NervesMCP.Connection.UART do
 
   @impl true
   def handle_call({:eval, code, timeout}, from, state) do
-    # Send the code followed by newline to execute in IEx
-    # We wrap in a unique marker to identify our output
     marker = generate_marker()
-
-    Logger.info("Running code on device:")
-    Logger.info(code)
 
     wrapped_code = """
     (fn ->
@@ -93,8 +86,6 @@ defmodule NervesMCP.Connection.UART do
       :ok
     end).()
     """
-    Logger.info("Wrapped code:")
-    Logger.info(wrapped_code)
 
     Circuits.UART.write(state.uart, wrapped_code <> "\n\n")
 
@@ -111,43 +102,34 @@ defmodule NervesMCP.Connection.UART do
 
   @impl true
   def handle_info({:circuits_uart, _port, data}, %{waiting: nil, console: nil} = state) do
-    Logger.info("not awaited: #{inspect(data)}")
-    # Discard data when not waiting for a response
+    NervesMCP.History.push(data)
     {:noreply, state}
   end
 
   def handle_info({:circuits_uart, _port, data}, %{waiting: nil, console: {pid, _ref}} = state) do
+    NervesMCP.History.push(data)
     send(pid, {:console_data, data})
     {:noreply, state}
   end
 
   def handle_info({:circuits_uart, _port, data}, %{waiting: {from, marker, timer_ref, acc}} = state) do
-    Logger.info("recv: #{inspect(data)}")
     new_acc = acc <> data
-
 
     start_marker = "\n#{marker}_START\r"
     end_marker = "\n#{marker}_END\r"
-    Logger.info("Looking for start: #{start_marker}")
+
     new_acc =
-    if String.contains?(new_acc, start_marker) do
-      [_, new_acc] = String.split(new_acc, start_marker, parts: 2)
-      Logger.info("Accumulated: \n#{new_acc}")
-      Logger.info("Found start..")
-      new_acc
-    else
-      new_acc
-    end
+      if String.contains?(new_acc, start_marker) do
+        [_, rest] = String.split(new_acc, start_marker, parts: 2)
+        rest
+      else
+        new_acc
+      end
 
-    Logger.info("Looking for end: #{end_marker}")
     if String.contains?(new_acc, end_marker) do
-      Logger.info("Found end..")
       [result | _] = String.split(new_acc, end_marker)
-      Logger.info("End acc: \n#{result}")
       Process.cancel_timer(timer_ref)
-
       GenServer.reply(from, {:ok, result})
-
       {:noreply, %{state | waiting: nil}}
     else
       {:noreply, %{state | waiting: {from, marker, timer_ref, new_acc}}}
@@ -163,8 +145,7 @@ defmodule NervesMCP.Connection.UART do
     {:noreply, %{state | console: nil}}
   end
 
-  def handle_info(msg, state) do
-    Logger.debug("unexpected message: #{inspect(msg)}")
+  def handle_info(_msg, state) do
     {:noreply, state}
   end
 

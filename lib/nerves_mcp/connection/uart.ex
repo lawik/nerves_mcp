@@ -20,6 +20,18 @@ defmodule NervesMCP.Connection.UART do
     GenServer.call(__MODULE__, {:eval, code, timeout}, timeout + 1000)
   end
 
+  def attach_console(pid \\ self()) do
+    GenServer.call(__MODULE__, {:attach_console, pid})
+  end
+
+  def detach_console do
+    GenServer.call(__MODULE__, :detach_console)
+  end
+
+  def send_raw(data) do
+    GenServer.cast(__MODULE__, {:send_raw, data})
+  end
+
   @impl true
   def init(_opts) do
     config = Application.get_env(:nerves_mcp, :connection, [])
@@ -31,11 +43,26 @@ defmodule NervesMCP.Connection.UART do
 
     case Circuits.UART.open(uart, port, speed: speed, active: true) do
       :ok ->
-        {:ok, %{uart: uart, buffer: "", waiting: nil}}
+        {:ok, %{uart: uart, buffer: "", waiting: nil, console: nil}}
 
       {:error, reason} ->
         {:stop, {:uart_open_failed, reason}}
     end
+  end
+
+  @impl true
+  def handle_call({:attach_console, pid}, _from, state) do
+    ref = Process.monitor(pid)
+    {:reply, :ok, %{state | console: {pid, ref}}}
+  end
+
+  def handle_call(:detach_console, _from, %{console: {_pid, ref}} = state) do
+    Process.demonitor(ref, [:flush])
+    {:reply, :ok, %{state | console: nil}}
+  end
+
+  def handle_call(:detach_console, _from, state) do
+    {:reply, :ok, state}
   end
 
   @impl true
@@ -77,9 +104,20 @@ defmodule NervesMCP.Connection.UART do
   end
 
   @impl true
-  def handle_info({:circuits_uart, _port, data}, %{waiting: nil} = state) do
+  def handle_cast({:send_raw, data}, state) do
+    Circuits.UART.write(state.uart, data)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:circuits_uart, _port, data}, %{waiting: nil, console: nil} = state) do
     Logger.info("not awaited: #{inspect(data)}")
     # Discard data when not waiting for a response
+    {:noreply, state}
+  end
+
+  def handle_info({:circuits_uart, _port, data}, %{waiting: nil, console: {pid, _ref}} = state) do
+    send(pid, {:console_data, data})
     {:noreply, state}
   end
 
@@ -119,6 +157,10 @@ defmodule NervesMCP.Connection.UART do
   def handle_info({:timeout, from}, state) do
     GenServer.reply(from, {:error, "Timeout waiting for device response"})
     {:noreply, %{state | waiting: nil}}
+  end
+
+  def handle_info({:DOWN, ref, :process, pid, _reason}, %{console: {pid, ref}} = state) do
+    {:noreply, %{state | console: nil}}
   end
 
   def handle_info(msg, state) do

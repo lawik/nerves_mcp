@@ -14,26 +14,58 @@ def deps do
 end
 ```
 
-## Configuration
+## Usage
 
-Configure the connection type and MCP server port in `config/config.exs`:
+NervesMCP can be run as a Mix task or as a standalone escript. The first argument is either a serial device path or an SSH host — NervesMCP auto-detects which based on the path.
 
-### UART (Serial) Connection
+### Mix task
+
+```bash
+# Serial — auto-detected from /dev/tty* path
+mix nerves_mcp /dev/ttyUSB0
+mix nerves_mcp /dev/ttyUSB0 --speed 9600
+
+# SSH — anything that isn't a serial path is treated as a host
+mix nerves_mcp nerves.local
+mix nerves_mcp nerves.local --user root --ssh-port 2222
+```
+
+### Escript
+
+Build the escript and run it directly:
+
+```bash
+mix escript.build
+./nerves_mcp /dev/ttyUSB0
+./nerves_mcp nerves.local --user exnvr --port 4000
+```
+
+### Options
+
+| Flag           | Description                        | Default   |
+|----------------|------------------------------------|-----------|
+| `--port`       | MCP server HTTP port               | `13000`   |
+| `--speed`      | Serial baud rate                   | `115200`  |
+| `--user`       | SSH username                       | `root`    |
+| `--ssh-port`   | SSH port                           | `22`      |
+| `--serial`     | Force serial mode (pass device)    |           |
+| `--ssh`        | Force SSH mode (pass host)         |           |
+
+Short aliases: `-p` (port), `-s` (speed), `-u` (user).
+
+### Configuration file
+
+Connection settings can also be defined in `config/config.exs`. CLI arguments override config values.
 
 ```elixir
+# Serial
 config :nerves_mcp, :port, 13000
-
 config :nerves_mcp, :connection,
   type: :uart,
   port: "/dev/ttyUSB0",
   speed: 115_200
-```
 
-### SSH Connection
-
-```elixir
-config :nerves_mcp, :port, 13000
-
+# Or SSH
 config :nerves_mcp, :connection,
   type: :ssh,
   host: "nerves.local",
@@ -41,13 +73,37 @@ config :nerves_mcp, :connection,
   port: 22
 ```
 
-## Running
+With config in place, you can start without any arguments:
 
 ```bash
-iex -S mix
+mix nerves_mcp
 ```
 
-The MCP server will be available at `http://localhost:13000/mcp` (or your configured port).
+Or override specific values:
+
+```bash
+mix nerves_mcp --speed 9600    # use config but change baud rate
+mix nerves_mcp other.local     # switch to a different host entirely
+```
+
+### Auto-detection
+
+If the first argument starts with `/dev/tty`, `/dev/cu.`, or `/dev/serial`, it is treated as a serial device. Otherwise it is treated as an SSH host. Use `--serial` or `--ssh` to be explicit:
+
+```bash
+mix nerves_mcp --serial /dev/ttyACM0
+mix nerves_mcp --ssh 192.168.1.100
+```
+
+### Connecting to the MCP server
+
+Once running, the MCP server is available at:
+
+```
+http://localhost:13000/mcp
+```
+
+Or whatever port you specified with `--port`.
 
 ## MCP Tools
 

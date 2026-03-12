@@ -60,15 +60,11 @@ defmodule NervesMCP do
       end
 
     # Start a process to receive and display console data
-    parent = self()
-
     receiver =
       spawn_link(fn ->
-        receive_loop(parent)
+        monitor_and_attach(connection_module)
+        receive_loop(connection_module)
       end)
-
-    # Attach the receiver process to get console data
-    connection_module.attach_console(receiver)
 
     IO.puts("Connected to device console. Commands: #quit, #history")
     IO.puts("---")
@@ -102,7 +98,24 @@ defmodule NervesMCP do
     System.halt(0)
   end
 
-  defp receive_loop(parent, buffer \\ <<>>) do
+  defp monitor_and_attach(connection_module) do
+    pid = wait_for_process(connection_module)
+    Process.monitor(pid)
+    connection_module.attach_console(self())
+  end
+
+  defp wait_for_process(connection_module) do
+    case Process.whereis(connection_module) do
+      nil ->
+        Process.sleep(200)
+        wait_for_process(connection_module)
+
+      pid ->
+        pid
+    end
+  end
+
+  defp receive_loop(connection_module, buffer \\ <<>>) do
     receive do
       {:console_data, data} ->
         combined = buffer <> data
@@ -112,7 +125,13 @@ defmodule NervesMCP do
           IO.write(complete)
         end
 
-        receive_loop(parent, incomplete)
+        receive_loop(connection_module, incomplete)
+
+      {:DOWN, _ref, :process, _pid, _reason} ->
+        IO.puts("\r\n--- Connection lost, reconnecting... ---")
+        monitor_and_attach(connection_module)
+        IO.puts("--- Reconnected ---")
+        receive_loop(connection_module)
 
       :stop ->
         # Write any remaining buffer on exit

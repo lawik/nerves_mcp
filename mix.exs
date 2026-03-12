@@ -13,7 +13,8 @@ defmodule NervesMCP.MixProject do
       docs: docs(),
       package: package(),
       aliases: aliases(),
-      dialyzer: dialyzer()
+      dialyzer: dialyzer(),
+      escript: escript()
     ]
   end
 
@@ -52,6 +53,10 @@ defmodule NervesMCP.MixProject do
         "dialyzer"
       ]
     ]
+  end
+
+  def escript do
+    [main_module: NervesMCP.CLI]
   end
 
   def dialyzer do

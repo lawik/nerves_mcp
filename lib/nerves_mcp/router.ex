@@ -5,13 +5,14 @@ defmodule NervesMCP.Router do
 
   alias Anubis.Server.Transport.StreamableHTTP
 
-  plug Plug.Logger
-  plug :match
-  plug :dispatch
+  plug(Plug.Logger)
+  plug(:match)
+  plug(:dispatch)
 
-  forward "/mcp",
+  forward("/mcp",
     to: StreamableHTTP.Plug,
     init_opts: [server: NervesMCP.Server, request_timeout: 30_000]
+  )
 
   match _ do
     send_resp(conn, 404, "not found")

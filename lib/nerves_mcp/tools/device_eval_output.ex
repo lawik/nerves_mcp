@@ -10,8 +10,8 @@ defmodule NervesMCP.Tools.DeviceEvalOutput do
   use Anubis.Server.Component, type: :tool
 
   schema do
-    field :code, {:required, :string}, description: "Elixir code to evaluate on the device"
-    field :timeout, :integer, description: "Timeout in milliseconds (default: 15000)"
+    field(:code, {:required, :string}, description: "Elixir code to evaluate on the device")
+    field(:timeout, :integer, description: "Timeout in milliseconds (default: 15000)")
   end
 
   @impl true
@@ -31,15 +31,23 @@ defmodule NervesMCP.Tools.DeviceEvalOutput do
     connection_type = Keyword.get(config, :type, :uart)
 
     result =
-      case connection_type do
-        :uart ->
-          NervesMCP.Connection.UART.eval_output(code, timeout)
+      try do
+        case connection_type do
+          :uart ->
+            NervesMCP.Connection.UART.eval_output(code, timeout)
 
-        :ssh ->
-          NervesMCP.Connection.SSH.eval_output(code, timeout)
+          :ssh ->
+            NervesMCP.Connection.SSH.eval_output(code, timeout)
 
-        other ->
-          {:error, "Unknown connection type: #{inspect(other)}"}
+          other ->
+            {:error, "Unknown connection type: #{inspect(other)}"}
+        end
+      catch
+        :exit, {:noproc, _} ->
+          {:error, "Device connection not available (process not running)"}
+
+        :exit, reason ->
+          {:error, "Device connection error: #{inspect(reason)}"}
       end
 
     alias Anubis.Server.Response

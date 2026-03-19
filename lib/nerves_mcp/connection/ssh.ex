@@ -3,11 +3,15 @@ defmodule NervesMCP.Connection.SSH do
   Handles SSH connection to a Nerves device.
 
   Uses a Port to maintain an interactive SSH session and evaluate Elixir code.
+  Automatically reconnects if the SSH connection drops (e.g. device reboot).
   """
 
   use GenServer
 
   require Logger
+
+  @initial_retry_delay 1_000
+  @max_retry_delay 30_000
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -33,8 +37,24 @@ defmodule NervesMCP.Connection.SSH do
     GenServer.cast(__MODULE__, {:send_raw, data})
   end
 
+  def reconnect do
+    GenServer.call(__MODULE__, :reconnect, 10_000)
+  end
+
   @impl true
   def init(_opts) do
+    state = %{
+      port: nil,
+      buffer: "",
+      waiting: nil,
+      console: nil,
+      retry_delay: @initial_retry_delay
+    }
+
+    {:ok, connect(state)}
+  end
+
+  defp connect(state) do
     config = Application.get_env(:nerves_mcp, :connection, [])
 
     host = Keyword.fetch!(config, :host)
@@ -42,21 +62,43 @@ defmodule NervesMCP.Connection.SSH do
     port = Keyword.get(config, :port, 22)
 
     ssh_args = [
-      "-o", "StrictHostKeyChecking=no",
-      "-o", "UserKnownHostsFile=/dev/null",
-      "-o", "ServerAliveInterval=60",
-      "-p", "#{port}",
+      "-o",
+      "StrictHostKeyChecking=no",
+      "-o",
+      "UserKnownHostsFile=/dev/null",
+      "-o",
+      "ServerAliveInterval=60",
+      "-p",
+      "#{port}",
       "-tt",
       "#{user}@#{host}"
     ]
 
-    port_ref = Port.open({:spawn_executable, System.find_executable("ssh")}, [
-      :binary,
-      :exit_status,
-      args: ssh_args
-    ])
+    try do
+      port_ref =
+        Port.open({:spawn_executable, System.find_executable("ssh")}, [
+          :binary,
+          :exit_status,
+          args: ssh_args
+        ])
 
-    {:ok, %{port: port_ref, buffer: "", waiting: nil, console: nil}}
+      Logger.info("SSH connection started to #{user}@#{host}:#{port}")
+      %{state | port: port_ref, retry_delay: @initial_retry_delay}
+    rescue
+      e ->
+        Logger.error("Failed to start SSH connection: #{inspect(e)}")
+        schedule_reconnect(state)
+        %{state | port: nil}
+    end
+  end
+
+  defp schedule_reconnect(state) do
+    Logger.info("Scheduling SSH reconnection in #{state.retry_delay}ms")
+    Process.send_after(self(), :reconnect, state.retry_delay)
+  end
+
+  defp next_retry_delay(current) do
+    min(current * 2, @max_retry_delay)
   end
 
   @impl true
@@ -74,7 +116,23 @@ defmodule NervesMCP.Connection.SSH do
     {:reply, :ok, state}
   end
 
+  def handle_call(:reconnect, _from, %{port: nil} = state) do
+    new_state = connect(state)
+    {:reply, if(new_state.port, do: :ok, else: {:error, "reconnect failed"}), new_state}
+  end
+
+  def handle_call(:reconnect, _from, state) do
+    # Close existing port and reconnect
+    Port.close(state.port)
+    new_state = connect(%{state | port: nil})
+    {:reply, if(new_state.port, do: :ok, else: {:error, "reconnect failed"}), new_state}
+  end
+
   @impl true
+  def handle_call({:eval, _code, _timeout}, _from, %{port: nil} = state) do
+    {:reply, {:error, "Device not connected (reconnecting...)"}, state}
+  end
+
   def handle_call({:eval, code, timeout}, from, state) do
     marker = generate_marker()
 
@@ -103,6 +161,10 @@ defmodule NervesMCP.Connection.SSH do
     timer_ref = Process.send_after(self(), {:timeout, from}, timeout)
 
     {:noreply, %{state | waiting: {from, marker, timer_ref, ""}}}
+  end
+
+  def handle_call({:eval_output, _code, _timeout}, _from, %{port: nil} = state) do
+    {:reply, {:error, "Device not connected (reconnecting...)"}, state}
   end
 
   def handle_call({:eval_output, code, timeout}, from, state) do
@@ -155,6 +217,10 @@ defmodule NervesMCP.Connection.SSH do
   end
 
   @impl true
+  def handle_cast({:send_raw, _data}, %{port: nil} = state) do
+    {:noreply, state}
+  end
+
   def handle_cast({:send_raw, data}, state) do
     Port.command(state.port, data)
     {:noreply, state}
@@ -166,13 +232,19 @@ defmodule NervesMCP.Connection.SSH do
     {:noreply, state}
   end
 
-  def handle_info({port, {:data, data}}, %{port: port, waiting: nil, console: {pid, _ref}} = state) do
+  def handle_info(
+        {port, {:data, data}},
+        %{port: port, waiting: nil, console: {pid, _ref}} = state
+      ) do
     NervesMCP.History.push(data)
     send(pid, {:console_data, data})
     {:noreply, state}
   end
 
-  def handle_info({port, {:data, data}}, %{port: port, waiting: {from, marker, timer_ref, acc}} = state) do
+  def handle_info(
+        {port, {:data, data}},
+        %{port: port, waiting: {from, marker, timer_ref, acc}} = state
+      ) do
     NervesMCP.History.push(data)
     new_acc = acc <> data
 
@@ -206,7 +278,41 @@ defmodule NervesMCP.Connection.SSH do
       GenServer.reply(from, {:error, "SSH connection closed unexpectedly"})
     end
 
-    {:stop, {:ssh_exit, status}, %{state | waiting: nil}}
+    # Notify console of disconnection
+    if state.console do
+      {pid, _ref} = state.console
+      send(pid, {:console_data, "\r\n--- SSH connection lost, reconnecting... ---\r\n"})
+    end
+
+    new_state = %{
+      state
+      | port: nil,
+        waiting: nil,
+        retry_delay: next_retry_delay(state.retry_delay)
+    }
+
+    schedule_reconnect(new_state)
+    {:noreply, new_state}
+  end
+
+  def handle_info(:reconnect, %{port: nil} = state) do
+    Logger.info("Attempting SSH reconnection...")
+    new_state = connect(state)
+
+    if new_state.port do
+      # Notify console of reconnection
+      if new_state.console do
+        {pid, _ref} = new_state.console
+        send(pid, {:console_data, "\r\n--- SSH reconnected ---\r\n"})
+      end
+    end
+
+    {:noreply, new_state}
+  end
+
+  def handle_info(:reconnect, state) do
+    # Already connected, ignore
+    {:noreply, state}
   end
 
   def handle_info({:timeout, from}, state) do

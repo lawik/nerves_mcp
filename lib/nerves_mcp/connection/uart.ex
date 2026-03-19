@@ -3,12 +3,17 @@ defmodule NervesMCP.Connection.UART do
   Handles UART serial connection to a Nerves device.
 
   Sends Elixir code to the device's IEx shell and captures output.
+  Automatically reconnects if the serial port is unavailable or disconnected.
   """
 
   use GenServer
 
+  require Logger
+
   @default_port "/dev/ttyUSB0"
   @default_speed 115_200
+  @initial_retry_delay 1_000
+  @max_retry_delay 30_000
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -36,20 +41,56 @@ defmodule NervesMCP.Connection.UART do
 
   @impl true
   def init(_opts) do
+    state = %{
+      uart: nil,
+      connected: false,
+      buffer: "",
+      waiting: nil,
+      console: nil,
+      retry_delay: @initial_retry_delay
+    }
+
+    {:ok, connect(state)}
+  end
+
+  defp connect(state) do
     config = Application.get_env(:nerves_mcp, :connection, [])
 
     port = Keyword.get(config, :port, @default_port)
     speed = Keyword.get(config, :speed, @default_speed)
 
-    {:ok, uart} = Circuits.UART.start_link()
+    # Start a new UART process if we don't have one
+    uart =
+      case state.uart do
+        nil ->
+          {:ok, pid} = Circuits.UART.start_link()
+          pid
+
+        existing ->
+          # Close any existing connection before reconnecting
+          Circuits.UART.close(existing)
+          existing
+      end
 
     case Circuits.UART.open(uart, port, speed: speed, active: true) do
       :ok ->
-        {:ok, %{uart: uart, buffer: "", waiting: nil, console: nil}}
+        Logger.info("UART connection opened on #{port}")
+        %{state | uart: uart, connected: true, retry_delay: @initial_retry_delay}
 
       {:error, reason} ->
-        {:stop, {:uart_open_failed, reason}}
+        Logger.error("Failed to open UART on #{port}: #{inspect(reason)}")
+        schedule_reconnect(state)
+        %{state | uart: uart, connected: false}
     end
+  end
+
+  defp schedule_reconnect(state) do
+    Logger.info("Scheduling UART reconnection in #{state.retry_delay}ms")
+    Process.send_after(self(), :reconnect, state.retry_delay)
+  end
+
+  defp next_retry_delay(current) do
+    min(current * 2, @max_retry_delay)
   end
 
   @impl true
@@ -68,6 +109,10 @@ defmodule NervesMCP.Connection.UART do
   end
 
   @impl true
+  def handle_call({:eval, _code, _timeout}, _from, %{connected: false} = state) do
+    {:reply, {:error, "Device not connected (reconnecting...)"}, state}
+  end
+
   def handle_call({:eval, code, timeout}, from, state) do
     marker = generate_marker()
 
@@ -96,6 +141,10 @@ defmodule NervesMCP.Connection.UART do
     timer_ref = Process.send_after(self(), {:timeout, from}, timeout)
 
     {:noreply, %{state | waiting: {from, marker, timer_ref, ""}}}
+  end
+
+  def handle_call({:eval_output, _code, _timeout}, _from, %{connected: false} = state) do
+    {:reply, {:error, "Device not connected (reconnecting...)"}, state}
   end
 
   def handle_call({:eval_output, code, timeout}, from, state) do
@@ -148,12 +197,41 @@ defmodule NervesMCP.Connection.UART do
   end
 
   @impl true
+  def handle_cast({:send_raw, _data}, %{connected: false} = state) do
+    {:noreply, state}
+  end
+
   def handle_cast({:send_raw, data}, state) do
     Circuits.UART.write(state.uart, data)
     {:noreply, state}
   end
 
   @impl true
+  def handle_info({:circuits_uart, _port, {:error, reason}}, state) do
+    Logger.error("UART error: #{inspect(reason)}")
+
+    if state.waiting do
+      {from, _marker, timer_ref, _acc} = state.waiting
+      Process.cancel_timer(timer_ref)
+      GenServer.reply(from, {:error, "UART connection error: #{inspect(reason)}"})
+    end
+
+    if state.console do
+      {pid, _ref} = state.console
+      send(pid, {:console_data, "\r\n--- UART connection lost, reconnecting... ---\r\n"})
+    end
+
+    new_state = %{
+      state
+      | connected: false,
+        waiting: nil,
+        retry_delay: next_retry_delay(state.retry_delay)
+    }
+
+    schedule_reconnect(new_state)
+    {:noreply, new_state}
+  end
+
   def handle_info({:circuits_uart, _port, data}, %{waiting: nil, console: nil} = state) do
     NervesMCP.History.push(data)
     {:noreply, state}
@@ -165,7 +243,10 @@ defmodule NervesMCP.Connection.UART do
     {:noreply, state}
   end
 
-  def handle_info({:circuits_uart, _port, data}, %{waiting: {from, marker, timer_ref, acc}} = state) do
+  def handle_info(
+        {:circuits_uart, _port, data},
+        %{waiting: {from, marker, timer_ref, acc}} = state
+      ) do
     NervesMCP.History.push(data)
     new_acc = acc <> data
 
@@ -188,6 +269,23 @@ defmodule NervesMCP.Connection.UART do
     else
       {:noreply, %{state | waiting: {from, marker, timer_ref, new_acc}}}
     end
+  end
+
+  def handle_info(:reconnect, %{connected: false} = state) do
+    Logger.info("Attempting UART reconnection...")
+    new_state = connect(state)
+
+    if new_state.connected and new_state.console do
+      {pid, _ref} = new_state.console
+      send(pid, {:console_data, "\r\n--- UART reconnected ---\r\n"})
+    end
+
+    {:noreply, new_state}
+  end
+
+  def handle_info(:reconnect, state) do
+    # Already connected, ignore
+    {:noreply, state}
   end
 
   def handle_info({:timeout, from}, state) do

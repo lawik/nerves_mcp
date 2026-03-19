@@ -11,6 +11,8 @@ defmodule NervesMCP.Server do
     version: "0.1.0",
     capabilities: [:tools]
 
-  component NervesMCP.Tools.DeviceEval
-  component NervesMCP.Tools.DeviceEvalOutput
+  component(NervesMCP.Tools.DeviceEval)
+  component(NervesMCP.Tools.DeviceEvalOutput)
+  component(NervesMCP.Tools.IsDeviceUp)
+  component(NervesMCP.Tools.IsDeviceUpdatedTo)
 end

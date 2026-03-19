@@ -69,7 +69,8 @@ defmodule NervesMCP.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:anubis_mcp, "~> 0.17"},
+      # {:anubis_mcp, "~> 0.17"},
+      {:anubis_mcp, github: "lawik/anubis-mcp", branch: "fix-uninitialized-2"},
       {:bandit, "~> 1.0"},
       {:circuits_uart, "~> 1.0"},
       {:circular_buffer, "~> 0.4"},

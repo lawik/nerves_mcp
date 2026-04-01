@@ -8,8 +8,8 @@ defmodule NervesMCP.Router do
   plug(:dispatch)
 
   forward("/mcp",
-    to: NervesMCP.MCPPlug,
-    init_opts: [server: NervesMCP.Server, request_timeout: 30_000]
+    to: EMCP.Transport.StreamableHTTP,
+    init_opts: [server: NervesMCP.Server]
   )
 
   match _ do

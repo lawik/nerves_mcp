@@ -5,6 +5,8 @@ defmodule NervesMCP.Application do
 
   @impl true
   def start(_type, _args) do
+    EMCP.SessionStore.ETS.init()
+
     config = Application.get_env(:nerves_mcp, :connection, [])
 
     children =
@@ -20,7 +22,6 @@ defmodule NervesMCP.Application do
 
         [
           NervesMCP.History,
-          {NervesMCP.Server, transport: :streamable_http},
           {Bandit, plug: NervesMCP.Router, port: port},
           connection_child
         ]

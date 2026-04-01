@@ -69,11 +69,10 @@ defmodule NervesMCP.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:anubis_mcp, "~> 1.0"},
+      {:emcp, "~> 0.3"},
       {:bandit, "~> 1.0"},
       {:circuits_uart, "~> 1.0"},
       {:circular_buffer, "~> 0.4"},
-      {:nstandard, "~> 0.1"},
       {:igniter, "~> 0.6", only: [:dev, :test]},
       {:ex_doc, "~> 0.31", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.0", only: [:dev, :test], runtime: false},

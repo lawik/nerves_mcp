@@ -7,25 +7,30 @@ defmodule NervesMCP.Tools.DeviceEvalOutput do
   and returns both the output and the result.
   """
 
-  use Anubis.Server.Component, type: :tool
+  @behaviour EMCP.Tool
 
-  schema do
-    field(:code, {:required, :string}, description: "Elixir code to evaluate on the device")
-    field(:timeout, :integer, description: "Timeout in milliseconds (default: 15000)")
-  end
+  @impl EMCP.Tool
+  def name, do: "device_eval_output"
 
-  @impl true
-  def annotations do
+  @impl EMCP.Tool
+  def description, do: "Evaluate Elixir code on the connected Nerves device and capture IO output along with the result"
+
+  @impl EMCP.Tool
+  def input_schema do
     %{
-      "readOnlyHint" => false,
-      "destructiveHint" => true
+      type: :object,
+      properties: %{
+        code: %{type: :string, description: "Elixir code to evaluate on the device"},
+        timeout: %{type: :integer, description: "Timeout in milliseconds (default: 15000)"}
+      },
+      required: [:code]
     }
   end
 
-  @impl true
-  def execute(params, frame) do
-    code = params[:code]
-    timeout = params[:timeout] || 15000
+  @impl EMCP.Tool
+  def call(_conn, args) do
+    code = args["code"]
+    timeout = args["timeout"] || 15000
 
     config = Application.get_env(:nerves_mcp, :connection, [])
     connection_type = Keyword.get(config, :type, :uart)
@@ -50,15 +55,12 @@ defmodule NervesMCP.Tools.DeviceEvalOutput do
           {:error, "Device connection error: #{inspect(reason)}"}
       end
 
-    alias Anubis.Server.Response
-
     case result do
       {:ok, output} ->
-        response = Response.tool() |> Response.text(output)
-        {:reply, response, frame}
+        EMCP.Tool.response([%{"type" => "text", "text" => output}])
 
       {:error, reason} ->
-        {:error, Anubis.MCP.Error.execution(reason), frame}
+        EMCP.Tool.error(reason)
     end
   end
 end

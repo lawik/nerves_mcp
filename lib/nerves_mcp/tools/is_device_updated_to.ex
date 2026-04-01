@@ -9,52 +9,55 @@ defmodule NervesMCP.Tools.IsDeviceUpdatedTo do
   is exceeded.
   """
 
-  use Anubis.Server.Component, type: :tool
-
-  schema do
-    field(:expected_uuid, {:required, :string},
-      description: "The firmware UUID expected after the update"
-    )
-
-    field(:timeout, :integer,
-      description: "Total timeout in milliseconds to keep retrying (default: 60000)"
-    )
-  end
-
-  @impl true
-  def annotations do
-    %{
-      "readOnlyHint" => true,
-      "destructiveHint" => false
-    }
-  end
+  @behaviour EMCP.Tool
 
   @eval_timeout 5_000
   @retry_pause 2_000
 
-  @impl true
-  def execute(params, frame) do
-    expected_uuid = params[:expected_uuid]
-    total_timeout = params[:timeout] || 60_000
+  @impl EMCP.Tool
+  def name, do: "is_device_updated_to"
+
+  @impl EMCP.Tool
+  def description, do: "Check if the connected Nerves device has been updated to a specific firmware version"
+
+  @impl EMCP.Tool
+  def input_schema do
+    %{
+      type: :object,
+      properties: %{
+        expected_uuid: %{
+          type: :string,
+          description: "The firmware UUID expected after the update"
+        },
+        timeout: %{
+          type: :integer,
+          description: "Total timeout in milliseconds to keep retrying (default: 60000)"
+        }
+      },
+      required: [:expected_uuid]
+    }
+  end
+
+  @impl EMCP.Tool
+  def call(_conn, args) do
+    expected_uuid = args["expected_uuid"]
+    total_timeout = args["timeout"] || 60_000
     deadline = System.monotonic_time(:millisecond) + total_timeout
 
     config = Application.get_env(:nerves_mcp, :connection, [])
     connection_type = Keyword.get(config, :type, :uart)
 
-    result = poll_device(connection_type, expected_uuid, deadline)
-
-    alias Anubis.Server.Response
-
-    case result do
+    case poll_device(connection_type, expected_uuid, deadline) do
       :ok ->
-        response =
-          Response.tool()
-          |> Response.text("Device is up and running expected firmware UUID: #{expected_uuid}")
-
-        {:reply, response, frame}
+        EMCP.Tool.response([
+          %{
+            "type" => "text",
+            "text" => "Device is up and running expected firmware UUID: #{expected_uuid}"
+          }
+        ])
 
       {:error, reason} ->
-        {:error, Anubis.MCP.Error.execution(reason), frame}
+        EMCP.Tool.error(reason)
     end
   end
 

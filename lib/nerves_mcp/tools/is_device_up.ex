@@ -8,47 +8,47 @@ defmodule NervesMCP.Tools.IsDeviceUp do
   if the total timeout is exceeded.
   """
 
-  use Anubis.Server.Component, type: :tool
-
-  schema do
-    field(:timeout, :integer,
-      description: "Total timeout in milliseconds to keep retrying (default: 60000)"
-    )
-  end
-
-  @impl true
-  def annotations do
-    %{
-      "readOnlyHint" => true,
-      "destructiveHint" => false
-    }
-  end
+  @behaviour EMCP.Tool
 
   @eval_timeout 5_000
   @retry_pause 2_000
 
-  @impl true
-  def execute(params, frame) do
-    total_timeout = params[:timeout] || 60_000
+  @impl EMCP.Tool
+  def name, do: "is_device_up"
+
+  @impl EMCP.Tool
+  def description, do: "Check if the connected Nerves device is up and responsive"
+
+  @impl EMCP.Tool
+  def input_schema do
+    %{
+      type: :object,
+      properties: %{
+        timeout: %{
+          type: :integer,
+          description: "Total timeout in milliseconds to keep retrying (default: 60000)"
+        }
+      },
+      required: []
+    }
+  end
+
+  @impl EMCP.Tool
+  def call(_conn, args) do
+    total_timeout = args["timeout"] || 60_000
     deadline = System.monotonic_time(:millisecond) + total_timeout
 
     config = Application.get_env(:nerves_mcp, :connection, [])
     connection_type = Keyword.get(config, :type, :uart)
 
-    result = poll_device(connection_type, deadline)
-
-    alias Anubis.Server.Response
-
-    case result do
+    case poll_device(connection_type, deadline) do
       {:ok, uuid} ->
-        response =
-          Response.tool()
-          |> Response.text("Device is up. Firmware UUID: #{uuid}")
-
-        {:reply, response, frame}
+        EMCP.Tool.response([
+          %{"type" => "text", "text" => "Device is up. Firmware UUID: #{uuid}"}
+        ])
 
       {:error, reason} ->
-        {:error, Anubis.MCP.Error.execution(reason), frame}
+        EMCP.Tool.error(reason)
     end
   end
 

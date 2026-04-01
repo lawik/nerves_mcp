@@ -6,13 +6,13 @@ defmodule NervesMCP.Server do
   via serial (UART) or SSH connections.
   """
 
-  use Anubis.Server,
+  use EMCP.Server,
     name: "nerves-mcp",
     version: "0.1.0",
-    capabilities: [:tools]
-
-  component(NervesMCP.Tools.DeviceEval)
-  component(NervesMCP.Tools.DeviceEvalOutput)
-  component(NervesMCP.Tools.IsDeviceUp)
-  component(NervesMCP.Tools.IsDeviceUpdatedTo)
+    tools: [
+      NervesMCP.Tools.DeviceEval,
+      NervesMCP.Tools.DeviceEvalOutput,
+      NervesMCP.Tools.IsDeviceUp,
+      NervesMCP.Tools.IsDeviceUpdatedTo
+    ]
 end

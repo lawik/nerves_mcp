@@ -20,7 +20,6 @@ defmodule NervesMCP.Application do
 
         [
           NervesMCP.History,
-          Anubis.Server.Registry,
           {NervesMCP.Server, transport: :streamable_http},
           {Bandit, plug: NervesMCP.Router, port: port},
           connection_child

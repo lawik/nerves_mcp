@@ -186,7 +186,6 @@ defmodule NervesMCP.CLI do
 
     children = [
       NervesMCP.History,
-      Anubis.Server.Registry,
       {NervesMCP.Server, transport: :streamable_http},
       {Bandit, plug: NervesMCP.Router, port: mcp_port},
       connection_child

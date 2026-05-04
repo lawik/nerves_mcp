@@ -13,6 +13,8 @@ defmodule NervesMCP.Server do
       NervesMCP.Tools.DeviceEval,
       NervesMCP.Tools.DeviceEvalOutput,
       NervesMCP.Tools.IsDeviceUp,
-      NervesMCP.Tools.IsDeviceUpdatedTo
+      NervesMCP.Tools.IsDeviceUpdatedTo,
+      NervesMCP.Tools.GrepRingLogger,
+      NervesMCP.Tools.GrepDmesg
     ]
 end

@@ -115,6 +115,14 @@ Evaluates Elixir code on the device and returns the expression's return value.
 
 Evaluates Elixir code and captures IO output (what the code prints via `IO.puts`, `IO.write`, etc.) in addition to the return value.
 
+### grep_ring_logger
+
+Filters the device's `RingLogger` buffer by a substring or regex pattern. Optional `tail` returns only the last N matches.
+
+### grep_dmesg
+
+Filters the device's `dmesg` (kernel ring buffer) by a substring or regex pattern. Optional `tail` returns only the last N matches.
+
 ## Interactive Console
 
 From IEx, you can open an interactive console to the device:

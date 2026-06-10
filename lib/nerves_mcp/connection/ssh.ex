@@ -60,6 +60,7 @@ defmodule NervesMCP.Connection.SSH do
     host = Keyword.fetch!(config, :host)
     user = Keyword.get(config, :user, "root")
     port = Keyword.get(config, :port, 22)
+    pass = Keyword.get(config, :pass)
 
     ssh_args = [
       "-o",
@@ -74,12 +75,27 @@ defmodule NervesMCP.Connection.SSH do
       "#{user}@#{host}"
     ]
 
+    {executable, args} =
+      case pass do
+        nil ->
+          {System.find_executable("ssh"), ssh_args}
+
+        password when is_binary(password) ->
+          case System.find_executable("sshpass") do
+            nil ->
+              raise "sshpass executable not found in PATH but --pass was provided"
+
+            sshpass ->
+              {sshpass, ["-p", password, "ssh" | ssh_args]}
+          end
+      end
+
     try do
       port_ref =
-        Port.open({:spawn_executable, System.find_executable("ssh")}, [
+        Port.open({:spawn_executable, executable}, [
           :binary,
           :exit_status,
-          args: ssh_args
+          args: args
         ])
 
       Logger.info("SSH connection started to #{user}@#{host}:#{port}")

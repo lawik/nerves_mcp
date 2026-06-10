@@ -59,7 +59,8 @@ defmodule NervesMCP.CLI do
           port: :integer,
           speed: :integer,
           user: :string,
-          ssh_port: :integer
+          ssh_port: :integer,
+          pass: :string
         ],
         aliases: [
           p: :port,
@@ -128,6 +129,7 @@ defmodule NervesMCP.CLI do
           --speed BAUD       Serial baud rate (default: 115200)
           --user USER        SSH user (default: root)
           --ssh-port PORT    SSH port (default: 22)
+          --pass PASSWORD    SSH password (requires sshpass; not for high-security use)
 
         Connection can also be configured in config/config.exs.
         CLI arguments override config values.
@@ -168,6 +170,7 @@ defmodule NervesMCP.CLI do
     |> maybe_put(:speed, Keyword.get(opts, :speed))
     |> maybe_put(:user, Keyword.get(opts, :user))
     |> maybe_put(:port, Keyword.get(opts, :ssh_port))
+    |> maybe_put(:pass, Keyword.get(opts, :pass))
   end
 
   defp maybe_put(config, _key, nil), do: config

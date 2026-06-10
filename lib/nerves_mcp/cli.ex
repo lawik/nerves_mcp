@@ -88,6 +88,18 @@ defmodule NervesMCP.CLI do
       end
 
     IO.puts("NervesMCP started on port #{mcp_port} via #{connection_desc}")
+
+    maybe_print_claude_hint(mcp_port)
+  end
+
+  defp maybe_print_claude_hint(mcp_port) do
+    if System.find_executable("claude") do
+      IO.puts("""
+
+      Claude Code detected. Add this MCP server with:
+        claude mcp add --transport http nerves http://localhost:#{mcp_port}/mcp
+      """)
+    end
   end
 
   defp resolve_connection(opts, positional, existing_config) do

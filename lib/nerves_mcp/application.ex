@@ -23,7 +23,8 @@ defmodule NervesMCP.Application do
         [
           NervesMCP.History,
           {Bandit, plug: NervesMCP.Router, port: port},
-          connection_child
+          connection_child,
+          NervesMCP.DeviceProbe
         ]
       else
         # No config — CLI.run/1 will start children later

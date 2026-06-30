@@ -14,7 +14,8 @@ defmodule NervesMCP.Tools.DeviceEval do
   def name, do: "device_eval"
 
   @impl EMCP.Tool
-  def description, do: "Evaluate Elixir code on the connected Nerves device and return the expression result"
+  def description,
+    do: "Evaluate Elixir code on the connected Nerves device and return the expression result"
 
   @impl EMCP.Tool
   def input_schema do

@@ -18,7 +18,8 @@ defmodule NervesMCP.Tools.IsDeviceUpdatedTo do
   def name, do: "is_device_updated_to"
 
   @impl EMCP.Tool
-  def description, do: "Check if the connected Nerves device has been updated to a specific firmware version"
+  def description,
+    do: "Check if the connected Nerves device has been updated to a specific firmware version"
 
   @impl EMCP.Tool
   def input_schema do

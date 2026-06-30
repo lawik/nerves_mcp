@@ -27,6 +27,28 @@ defmodule NervesMCP.Connection.UART do
     GenServer.call(__MODULE__, {:eval_output, code, timeout}, timeout + 1000)
   end
 
+  @doc "Run a raw shell command (no Elixir wrapping). Used in degraded shell mode."
+  def shell_eval(command, timeout \\ 15000) do
+    GenServer.call(__MODULE__, {:shell_eval, command, timeout}, timeout + 1000)
+  end
+
+  @doc "Run a raw shell command and capture stdout/stderr plus exit code."
+  def shell_eval_output(command, timeout \\ 15000) do
+    GenServer.call(__MODULE__, {:shell_eval_output, command, timeout}, timeout + 1000)
+  end
+
+  @doc """
+  Probe what is on the other end. Returns:
+
+    * `{:ok, result}` — an Elixir result came back (classify it upstream)
+    * `:noise`        — bytes came back but no valid Elixir result
+    * `:down`         — not connected / nothing came back
+    * `:busy`         — an evaluation is already in flight
+  """
+  def probe(timeout \\ 4_000) do
+    GenServer.call(__MODULE__, {:probe, timeout}, timeout + 1000)
+  end
+
   def attach_console(pid \\ self()) do
     GenServer.call(__MODULE__, {:attach_console, pid})
   end
@@ -46,6 +68,7 @@ defmodule NervesMCP.Connection.UART do
       connected: false,
       buffer: "",
       waiting: nil,
+      match_style: :elixir,
       console: nil,
       retry_delay: @initial_retry_delay
     }
@@ -140,7 +163,7 @@ defmodule NervesMCP.Connection.UART do
 
     timer_ref = Process.send_after(self(), {:timeout, from}, timeout)
 
-    {:noreply, %{state | waiting: {from, marker, timer_ref, ""}}}
+    {:noreply, %{state | waiting: {from, marker, timer_ref, ""}, match_style: :elixir}}
   end
 
   def handle_call({:eval_output, _code, _timeout}, _from, %{connected: false} = state) do
@@ -193,7 +216,85 @@ defmodule NervesMCP.Connection.UART do
 
     timer_ref = Process.send_after(self(), {:timeout, from}, timeout)
 
-    {:noreply, %{state | waiting: {from, marker, timer_ref, ""}}}
+    {:noreply, %{state | waiting: {from, marker, timer_ref, ""}, match_style: :elixir}}
+  end
+
+  def handle_call({:shell_eval, _command, _timeout}, _from, %{connected: false} = state) do
+    {:reply, {:error, "Device not connected (reconnecting...)"}, state}
+  end
+
+  def handle_call({:shell_eval, command, timeout}, from, state) do
+    marker = generate_marker()
+    wrapped = "echo '#{marker}_START'\n#{command}\necho '#{marker}_END'\n"
+
+    Circuits.UART.write(state.uart, wrapped)
+
+    timer_ref = Process.send_after(self(), {:timeout, from}, timeout)
+
+    {:noreply, %{state | waiting: {from, marker, timer_ref, ""}, match_style: :shell}}
+  end
+
+  def handle_call({:shell_eval_output, _command, _timeout}, _from, %{connected: false} = state) do
+    {:reply, {:error, "Device not connected (reconnecting...)"}, state}
+  end
+
+  def handle_call({:shell_eval_output, command, timeout}, from, state) do
+    marker = generate_marker()
+
+    wrapped =
+      "echo '#{marker}_START'\n" <>
+        "echo 'OUTPUT:'\n" <>
+        "#{command} 2>&1\n" <>
+        "__mcp_rc=$?\n" <>
+        "echo 'RESULT:'\n" <>
+        "echo \"Exit code: $__mcp_rc\"\n" <>
+        "echo '#{marker}_END'\n"
+
+    Circuits.UART.write(state.uart, wrapped)
+
+    timer_ref = Process.send_after(self(), {:timeout, from}, timeout)
+
+    {:noreply, %{state | waiting: {from, marker, timer_ref, ""}, match_style: :shell}}
+  end
+
+  def handle_call({:probe, _timeout}, _from, %{connected: false} = state) do
+    {:reply, :down, state}
+  end
+
+  def handle_call({:probe, _timeout}, _from, %{waiting: waiting} = state)
+      when not is_nil(waiting) do
+    {:reply, :busy, state}
+  end
+
+  def handle_call({:probe, timeout}, from, state) do
+    marker = generate_marker()
+    code = ~s|Nerves.Runtime.KV.get_active("nerves_fw_uuid")|
+
+    wrapped_code = """
+    (fn ->
+      result = try do
+        {value, _binding} = Code.eval_string(#{inspect(code)})
+        {:ok, inspect(value, pretty: true, limit: :infinity)}
+      rescue
+        e -> {:error, Exception.format(:error, e, __STACKTRACE__)}
+      catch
+        kind, reason -> {:error, Exception.format(kind, reason, __STACKTRACE__)}
+      end
+      IO.puts("#{marker}_START")
+      case result do
+        {:ok, output} -> IO.puts(output)
+        {:error, msg} -> IO.puts("ERROR: " <> msg)
+      end
+      IO.puts("#{marker}_END")
+      :ok
+    end).()
+    """
+
+    Circuits.UART.write(state.uart, wrapped_code <> "\n\n")
+
+    timer_ref = Process.send_after(self(), {:probe_timeout, from}, timeout)
+
+    {:noreply, %{state | waiting: {from, marker, timer_ref, ""}, match_style: :elixir}}
   end
 
   @impl true
@@ -250,24 +351,14 @@ defmodule NervesMCP.Connection.UART do
     NervesMCP.History.push(data)
     new_acc = acc <> data
 
-    start_marker = "\n#{marker}_START\r"
-    end_marker = "\n#{marker}_END\r"
+    case match_markers(new_acc, marker, state.match_style) do
+      {:done, result} ->
+        Process.cancel_timer(timer_ref)
+        GenServer.reply(from, {:ok, result})
+        {:noreply, %{state | waiting: nil}}
 
-    new_acc =
-      if String.contains?(new_acc, start_marker) do
-        [_, rest] = String.split(new_acc, start_marker, parts: 2)
-        rest
-      else
-        new_acc
-      end
-
-    if String.contains?(new_acc, end_marker) do
-      [result | _] = String.split(new_acc, end_marker)
-      Process.cancel_timer(timer_ref)
-      GenServer.reply(from, {:ok, result})
-      {:noreply, %{state | waiting: nil}}
-    else
-      {:noreply, %{state | waiting: {from, marker, timer_ref, new_acc}}}
+      {:cont, acc2} ->
+        {:noreply, %{state | waiting: {from, marker, timer_ref, acc2}}}
     end
   end
 
@@ -285,6 +376,16 @@ defmodule NervesMCP.Connection.UART do
 
   def handle_info(:reconnect, state) do
     # Already connected, ignore
+    {:noreply, state}
+  end
+
+  def handle_info({:probe_timeout, from}, %{waiting: {from, _marker, _timer_ref, acc}} = state) do
+    reply = if String.trim(acc) == "", do: :down, else: :noise
+    GenServer.reply(from, reply)
+    {:noreply, %{state | waiting: nil}}
+  end
+
+  def handle_info({:probe_timeout, _from}, state) do
     {:noreply, state}
   end
 
@@ -312,5 +413,52 @@ defmodule NervesMCP.Connection.UART do
 
   defp generate_marker do
     :crypto.strong_rand_bytes(8) |> Base.encode16()
+  end
+
+  # Elixir (IEx) output: skip the echoed source by anchoring the markers to the
+  # printed lines (`\n...START\r`). Shell output: lenient bare markers, matching
+  # the density device_mcp behaviour.
+  defp match_markers(acc, marker, :elixir) do
+    start_marker = "\n#{marker}_START\r"
+    end_marker = "\n#{marker}_END\r"
+
+    acc =
+      if String.contains?(acc, start_marker) do
+        [_, rest] = String.split(acc, start_marker, parts: 2)
+        rest
+      else
+        acc
+      end
+
+    if String.contains?(acc, end_marker) do
+      [result | _] = String.split(acc, end_marker)
+      {:done, result}
+    else
+      {:cont, acc}
+    end
+  end
+
+  defp match_markers(acc, marker, :shell) do
+    start_marker = "#{marker}_START"
+    end_marker = "#{marker}_END"
+
+    acc =
+      if String.contains?(acc, start_marker) do
+        [_, rest] = String.split(acc, start_marker, parts: 2)
+
+        rest
+        |> String.replace_leading("\r\n", "")
+        |> String.replace_leading("\r", "")
+        |> String.replace_leading("\n", "")
+      else
+        acc
+      end
+
+    if String.contains?(acc, end_marker) do
+      [result | _] = String.split(acc, end_marker)
+      {:done, String.trim_trailing(result)}
+    else
+      {:cont, acc}
+    end
   end
 end
